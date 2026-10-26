@@ -23,6 +23,7 @@ import {
   newsletterRepository,
   siteRepository,
 } from './database'
+import type { EventRegistrationStatus } from './types'
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -621,6 +622,60 @@ app.post('/events/:id/registrations', async (req: Request, res: Response, next: 
   try {
     const data = await eventRepository.register(req.params.id, req.body)
     return res.status(201).json({ success: true, data })
+  } catch (err) {
+    next(err)
+  }
+})
+
+// ============================================================
+// Event Registration Management Routes (non-LK1)
+// ============================================================
+
+app.get('/event-registrations', authMiddleware, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { page, perPage, eventId, status, search } = req.query
+    const result = await eventRepository.listRegistrations({
+      page: page ? parseInt(page as string, 10) : undefined,
+      perPage: perPage ? parseInt(perPage as string, 10) : undefined,
+      eventId: eventId as string | undefined,
+      status: status as EventRegistrationStatus | 'Semua' | undefined,
+      search: search as string | undefined,
+    })
+    return res.json({ success: true, data: result.data, meta: result.meta })
+  } catch (err) {
+    next(err)
+  }
+})
+
+app.get('/event-registrations/:id', authMiddleware, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const data = await eventRepository.findRegistrationById(req.params.id)
+    if (!data) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Pendaftaran agenda tidak ditemukan' },
+      })
+    }
+    return res.json({ success: true, data })
+  } catch (err) {
+    next(err)
+  }
+})
+
+app.patch('/event-registrations/:id', authMiddleware, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const status = req.body?.status as EventRegistrationStatus
+    const data = await eventRepository.updateRegistrationStatus(req.params.id, status)
+    return res.json({ success: true, data })
+  } catch (err) {
+    next(err)
+  }
+})
+
+app.delete('/event-registrations/:id', authMiddleware, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const result = await eventRepository.deleteRegistration(req.params.id)
+    return res.json({ success: true, data: result })
   } catch (err) {
     next(err)
   }

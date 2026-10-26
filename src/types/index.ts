@@ -117,14 +117,28 @@ export interface EventRegistrationInput {
   phone?: string
 }
 
+export type EventRegistrationStatus = 'confirmed' | 'waitlist' | 'cancelled'
+
 export interface EventRegistration {
   id: string
   eventId: string
   name: string
   email: string
   phone?: string
-  status: 'confirmed' | 'waitlist' | 'cancelled'
+  status: EventRegistrationStatus
   createdAt: string
+}
+
+export interface EventRegistrationEventSummary {
+  id: string
+  title: string
+  category: EventCategory
+  date: string
+  location: string
+}
+
+export interface EventRegistrationWithEvent extends EventRegistration {
+  event: EventRegistrationEventSummary | null
 }
 
 export interface EventSummary {

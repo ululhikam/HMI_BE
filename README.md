@@ -117,6 +117,7 @@ curl http://localhost:3001/health
 | Komentar | `GET/POST /articles/:slug/comments`, `DELETE /comments/:id` |
 | Pengurus | `GET/POST /members`, `GET/PATCH/DELETE /members/:id` |
 | Agenda | `GET/POST /events`, `GET/PATCH/DELETE /events/:id`, `GET /events/summary`, `GET /events/featured`, `GET /events/past-highlights`, `POST /events/:id/registrations` |
+| Pendaftar agenda (non-LK1) | `GET /event-registrations`, `GET/PATCH/DELETE /event-registrations/:id` |
 | Narasumber & testimoni | `GET /speakers`, `GET /testimonials` |
 | Pendaftar LK 1 | `GET/POST /lk1-applications`, `GET/PATCH /lk1-applications/:id`, `GET /lk1-applications/stats` |
 | Galeri | `GET/POST /gallery`, `GET/PATCH/DELETE /gallery/:id` |
