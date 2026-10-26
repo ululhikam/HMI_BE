@@ -11,12 +11,14 @@ backend/
 ├── src/
 │   ├── config/supabase.ts    # Klien Supabase
 │   ├── database/             # Repository per entitas
-│   ├── middleware/           # authMiddleware, errorHandler
+│   ├── middleware/           # authMiddleware, CORS, errorHandler
+│   ├── services/             # mediaStorage (Supabase Storage / lokal)
 │   ├── scripts/              # migrate, create-admin, verify-db
 │   ├── types/                # Tipe domain
 │   └── index.ts              # Entry point & semua route
 ├── supabase/migrations/      # Riwayat migrasi
 ├── schema.sql                # Skema lengkap
+├── vercel.json               # Konfigurasi deploy Vercel
 ├── .env.example
 └── package.json
 ```
@@ -35,6 +37,12 @@ Isi environment sesuai proyek Supabase Anda:
 PORT=3001
 SUPABASE_URL=https://<project-ref>.supabase.co
 SUPABASE_ANON_KEY=<anon-key>
+SUPABASE_SERVICE_ROLE_KEY=<service-role-key>
+
+CORS_ORIGINS=http://localhost:5173
+MEDIA_STORAGE=auto
+SUPABASE_STORAGE_BUCKET=media
+MAX_UPLOAD_MB=3
 
 # Pilih salah satu koneksi database:
 DB_HOST=aws-0-<region>.pooler.supabase.com
@@ -50,9 +58,11 @@ ADMIN_NAME=Administrator
 
 Catatan:
 
-- `SUPABASE_SERVICE_ROLE_KEY` opsional. Jika diisi, backend memakainya untuk operasi database. Key ini tidak boleh dikirim ke frontend.
-- `DB_HOST`, `DB_USER`, dan `DB_PASSWORD` hanya dipakai oleh script (`migrate`, `create-admin`). API runtime memakai Supabase client.
-- `PUBLIC_BASE_URL` opsional, dipakai untuk membentuk URL absolut file upload. Jika kosong, URL diambil dari request.
+- `SUPABASE_SERVICE_ROLE_KEY` wajib untuk Supabase Storage dan sangat disarankan untuk operasi database server. Key ini tidak boleh dikirim ke frontend.
+- `DB_HOST`, `DB_USER`, dan `DB_PASSWORD` hanya dipakai oleh script (`migrate`, `create-admin`). API runtime memakai Supabase client, jadi variabel DB tidak wajib di Vercel.
+- `CORS_ORIGINS` berisi origin frontend yang diizinkan, dipisahkan koma. Request tanpa `Origin` (health check/server-to-server) tetap diizinkan.
+- `MEDIA_STORAGE=auto` memakai Supabase Storage bila service role tersedia atau saat berjalan di Vercel. Gunakan `local` hanya untuk development.
+- `PUBLIC_BASE_URL` opsional, hanya dipakai untuk membentuk URL absolut upload lokal. Jika kosong, URL diambil dari request.
 
 ## Menyiapkan database & admin
 
@@ -129,13 +139,15 @@ Detail body, query, dan response ada di `apicontract.yaml`.
 Aturan:
 
 - Hanya `image/png`, `image/jpeg`, `image/jpg`, `image/webp`, `image/gif`.
-- Ukuran maksimal 5 MB setelah decode.
+- Ukuran maksimal 3 MB setelah decode agar payload base64 tetap di bawah batas body Vercel Functions.
 - Nama file dibersihkan dan diberi prefix timestamp.
-- Response: `{ url, filename, size }`.
-- File disimpan di `uploads/` dan disajikan lewat `GET /uploads/<filename>`.
+- Response: `{ url, filename, size, storage }`.
+- Dengan service role, file diunggah ke bucket Supabase Storage `SUPABASE_STORAGE_BUCKET` dan URL publik dikembalikan. Bucket publik dibuat otomatis bila belum ada.
+- Tanpa service role di local, file disimpan di `uploads/` dan disajikan lewat `GET /uploads/<filename>`.
+- Filesystem Vercel tidak persisten, sehingga upload produksi selalu memakai Supabase Storage.
 - URL `http(s)://...` dapat dikirim langsung dan akan dikembalikan apa adanya.
 
-Gunakan volume persisten saat deploy, atau ganti implementasi ke object storage.
+Buat bucket `media` dengan akses publik di Supabase Dashboard sebelum produksi, atau biarkan service role membuatnya otomatis pada upload pertama.
 
 ## Format response & error
 
@@ -170,9 +182,81 @@ Error handler memetakan beberapa kode PostgreSQL/Supabase:
 - Tidak ada seed artikel, agenda, pengurus, galeri, atau testimoni dummy. Database produksi mulai dari konten yang diisi admin.
 - Konten Beranda dan Tentang Kami disimpan sebagai JSONB di `site_pages`; identitas organisasi dan statistik di `site_settings`.
 
+## Deploy ke Vercel
+
+Backend disiapkan sebagai project Vercel terpisah dari frontend. Saat mengimpor repository, pilih **Root Directory** `backend` (jika memakai repository ini) atau root repository backend. `vercel.json` menetapkan framework Express; Vercel menjalankan `src/index.ts` sebagai satu Vercel Function dan meneruskan seluruh path API tanpa prefix tambahan.
+
+### 1. Sebelum deploy
+
+1. Buat project Supabase dan isi `backend/.env` secara lokal.
+2. Jalankan migrasi dan buat admin dari komputer/CI, bukan dari build Vercel:
+
+   ```bash
+   cd backend
+   npm run migrate
+   npm run create-admin
+   ```
+
+3. Siapkan origin frontend produksi, mis. `https://hmi-insan-cita.vercel.app`.
+4. Pastikan bucket Supabase Storage publik bernama `media` tersedia. Service role juga dapat membuatnya otomatis saat upload pertama.
+
+### 2. Environment variables Vercel
+
+| Variabel | Wajib | Keterangan |
+| --- | --- | --- |
+| `SUPABASE_URL` | Ya | URL project Supabase. |
+| `SUPABASE_SERVICE_ROLE_KEY` | Ya | Operasi database server dan upload Supabase Storage. Jangan pernah diekspos ke frontend. |
+| `SUPABASE_ANON_KEY` | Tidak | Cadangan bila service role tidak dipakai. Salah satu key Supabase wajib ada. |
+| `CORS_ORIGINS` | Ya | Origin frontend, dipisahkan koma. Bisa memakai pola `*.vercel.app` untuk preview. |
+| `SUPABASE_STORAGE_BUCKET` | Tidak | Default `media`. |
+| `MEDIA_STORAGE` | Tidak | Gunakan `supabase` atau biarkan `auto`. |
+| `MAX_UPLOAD_MB` | Tidak | Default dan batas maksimum 3 MB. |
+| `PUBLIC_BASE_URL` | Tidak | Hanya relevan untuk upload lokal. |
+| `DB_*` / `DATABASE_URL` | Tidak | Hanya untuk script migrasi lokal/CI. Tidak diperlukan runtime Vercel. |
+| `ADMIN_*` | Tidak | Hanya untuk `npm run create-admin`, bukan runtime. |
+| `PORT` | Tidak | Diatur otomatis oleh Vercel. |
+
+Jangan mengisi `MEDIA_STORAGE=local` di Vercel: filesystem Function bersifat sementara dan tidak dapat menyajikan file lama. Folder `uploads/` juga dikecualikan melalui `.vercelignore`.
+
+### 3. Deploy
+
+Lewat dashboard Vercel:
+
+1. **Add New Project** lalu impor repository.
+2. Set **Root Directory** ke `backend`.
+3. Biarkan framework terdeteksi sebagai Express; `vercel.json` sudah menetapkannya.
+4. Masukkan environment variable di atas untuk Production (dan Preview bila diperlukan).
+5. Deploy.
+
+Lewat CLI, dari folder `backend`:
+
+```bash
+npx vercel
+npx vercel --prod
+```
+
+Tidak ada perintah build atau output directory yang perlu di-override. Node.js dikunci ke versi `22.x` melalui `package.json`.
+
+### 4. Verifikasi
+
+```bash
+curl https://<nama-backend>.vercel.app/
+curl https://<nama-backend>.vercel.app/health
+```
+
+Response `/health` menampilkan `storage: "supabase"` bila konfigurasi benar. Setelah itu, arahkan `VITE_API_BASE_URL` di project frontend ke `https://<nama-backend>.vercel.app` (tanpa trailing slash), lalu redeploy frontend.
+
+### 5. Batasan Vercel
+
+- Body request Vercel Functions dibatasi sekitar 4,5 MB. Karena API menerima base64, ukuran file maksimum dijaga 3 MB agar payload tetap aman.
+- Upload produksi memakai Supabase Storage; `express.static('/uploads')` hanya aktif untuk development lokal.
+- Migrasi database tidak dijalankan otomatis saat deploy. Jalankan `npm run migrate` secara terkontrol dari lokal/CI.
+- Gunakan origin CORS yang eksplisit di produksi. Jika `CORS_ORIGINS` kosong, backend mengizinkan semua origin dan menulis peringatan di log.
+
 ## Catatan produksi
 
-- Batasi CORS ke origin frontend Anda.
+- Batasi CORS ke origin frontend Anda melalui `CORS_ORIGINS`.
 - Aktifkan dan uji RLS Supabase. Kebijakan bawaan `schema.sql` masih permisif untuk kemudahan pengembangan.
 - Jangan commit `.env`, `uploads/`, atau `dist/`.
-- Gunakan HTTPS dan simpan `SUPABASE_SERVICE_ROLE_KEY` hanya di server.
+- Gunakan HTTPS dan simpan `SUPABASE_SERVICE_ROLE_KEY` hanya di server/Vercel Environment Variables.
+- Buat bucket Supabase Storage dengan akses publik hanya untuk media yang memang boleh diakses publik.
