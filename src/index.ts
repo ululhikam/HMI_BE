@@ -26,6 +26,7 @@ import {
 } from './database'
 import type { AdminRole, EventRegistrationStatus } from './types'
 
+
 const app = express()
 const PORT = process.env.PORT || 3001
 
