@@ -142,19 +142,9 @@ export interface EventRegistrationWithEvent extends EventRegistration {
 }
 
 export interface EventSummary {
-  speakers: number
   participants: number
   sessions: number
   alumni: number
-}
-
-export interface Speaker {
-  id: string
-  name: string
-  role: string
-  institution: string
-  avatar: string
-  topic: string
 }
 
 export interface PastEventPhoto {

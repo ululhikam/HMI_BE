@@ -762,15 +762,6 @@ app.get('/events/past-highlights', async (_req: Request, res: Response, next: Ne
   }
 })
 
-app.get('/speakers', async (_req: Request, res: Response, next: NextFunction) => {
-  try {
-    const data = await eventRepository.listSpeakers()
-    return res.json({ success: true, data })
-  } catch (err) {
-    next(err)
-  }
-})
-
 app.get('/testimonials', async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const data = await eventRepository.listTestimonials()

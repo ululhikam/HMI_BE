@@ -132,17 +132,11 @@ CREATE TABLE IF NOT EXISTS public.event_registrations (
 CREATE INDEX IF NOT EXISTS idx_registrations_event ON public.event_registrations("eventId");
 
 -- =============================================================================
--- 6. SPEAKERS, TESTIMONIALS & PAST HIGHLIGHTS
+-- 6. TESTIMONIALS & PAST HIGHLIGHTS
 -- =============================================================================
-CREATE TABLE IF NOT EXISTS public.speakers (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name TEXT NOT NULL,
-    role TEXT NOT NULL,
-    institution TEXT NOT NULL,
-    avatar TEXT NOT NULL,
-    topic TEXT NOT NULL,
-    "createdAt" TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
-);
+-- Tabel speakers lama tidak dipakai lagi. Narasumber kini melekat langsung
+-- pada masing-masing agenda melalui kolom events.speaker/speakerRole.
+DROP TABLE IF EXISTS public.speakers CASCADE;
 
 CREATE TABLE IF NOT EXISTS public.testimonials (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -268,7 +262,7 @@ DECLARE
     tbl text;
     tables text[] := ARRAY[
         'articles', 'comments', 'article_likes', 'article_bookmarks',
-        'members', 'events', 'event_registrations', 'speakers',
+        'members', 'events', 'event_registrations',
         'testimonials', 'past_highlights', 'lk1_applications',
         'gallery', 'contact_messages', 'newsletter_subscriptions',
         'site_settings', 'live_streams'

@@ -19,7 +19,6 @@ const tables = [
   'members',
   'events',
   'event_registrations',
-  'speakers',
   'testimonials',
   'past_highlights',
   'lk1_applications',

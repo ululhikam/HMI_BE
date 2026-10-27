@@ -10,7 +10,6 @@ import type {
   EventStatus,
   EventSummary,
   PastEventPhoto,
-  Speaker,
   Testimonial,
 } from '../types'
 
@@ -104,28 +103,16 @@ export class EventRepository extends BaseRepository {
   }
 
   async getSummary(): Promise<EventSummary> {
-    const [eventsCount, speakersCount, registrationsCount] = await Promise.all([
+    const [eventsCount, registrationsCount] = await Promise.all([
       this.countAll(),
-      supabase.from('speakers').select('*', { count: 'exact', head: true }).then(r => r.count ?? 0),
       supabase.from('event_registrations').select('*', { count: 'exact', head: true }).then(r => r.count ?? 0),
     ])
 
     return {
-      speakers: speakersCount,
       participants: registrationsCount,
       sessions: eventsCount,
       alumni: 0,
     }
-  }
-
-  async listSpeakers(): Promise<Speaker[]> {
-    const { data, error } = await supabase
-      .from('speakers')
-      .select('*')
-      .order('name', { ascending: true })
-
-    if (error) throw error
-    return (data ?? []) as Speaker[]
   }
 
   async listTestimonials(): Promise<Testimonial[]> {
