@@ -1,10 +1,10 @@
 import 'dotenv/config'
 import express, { Request, Response, NextFunction } from 'express'
 import helmet from 'helmet'
-import { authMiddleware, AuthRequest, mapSupabaseUser } from './middleware/auth'
+import { authMiddleware, superadminMiddleware, AuthRequest, resolveAdminUser } from './middleware/auth'
 import { corsMiddleware } from './middleware/cors'
-import { errorHandler, notFoundHandler } from './middleware/error'
-import { supabase } from './config/supabase'
+import { AppError, errorHandler, notFoundHandler } from './middleware/error'
+import { supabase, supabaseAuth } from './config/supabase'
 import {
   LOCAL_UPLOAD_DIR,
   MAX_UPLOAD_BYTES,
@@ -22,8 +22,9 @@ import {
   contactMessageRepository,
   newsletterRepository,
   siteRepository,
+  adminUserRepository,
 } from './database'
-import type { EventRegistrationStatus } from './types'
+import type { AdminRole, EventRegistrationStatus } from './types'
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -166,7 +167,7 @@ app.post('/auth/login', async (req: Request, res: Response) => {
   }
 
   try {
-    const { data, error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabaseAuth.auth.signInWithPassword({
       email: email.trim().toLowerCase(),
       password,
     })
@@ -178,13 +179,11 @@ app.post('/auth/login', async (req: Request, res: Response) => {
       })
     }
 
-    const mappedUser = mapSupabaseUser(data.user)
-    if (mappedUser.role !== 'admin' && mappedUser.role !== 'superadmin') {
-      return res.status(403).json({
-        success: false,
-        error: { code: 'FORBIDDEN', message: 'Akun ini tidak memiliki akses admin' },
-      })
-    }
+    const mappedUser = await resolveAdminUser(data.user)
+
+    await adminUserRepository.touchLastLogin(data.user.id).catch(() => {
+      // Login tetap berhasil meskipun pencatatan waktu login gagal.
+    })
 
     const expiresIn = data.session.expires_in ?? 3600
     return res.json({
@@ -197,7 +196,13 @@ app.post('/auth/login', async (req: Request, res: Response) => {
         expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
       },
     })
-  } catch {
+  } catch (err) {
+    if (err instanceof AppError) {
+      return res.status(err.statusCode).json({
+        success: false,
+        error: { code: err.code, message: err.message },
+      })
+    }
     return res.status(503).json({
       success: false,
       error: { code: 'AUTH_UNAVAILABLE', message: 'Layanan autentikasi tidak dapat dihubungi' },
@@ -231,7 +236,7 @@ app.post('/auth/refresh', async (req: Request, res: Response) => {
   }
 
   try {
-    const { data, error } = await supabase.auth.refreshSession({ refresh_token: refreshToken })
+    const { data, error } = await supabaseAuth.auth.refreshSession({ refresh_token: refreshToken })
 
     if (error || !data.session || !data.user) {
       return res.status(401).json({
@@ -243,13 +248,7 @@ app.post('/auth/refresh', async (req: Request, res: Response) => {
       })
     }
 
-    const mappedUser = mapSupabaseUser(data.user)
-    if (mappedUser.role !== 'admin' && mappedUser.role !== 'superadmin') {
-      return res.status(403).json({
-        success: false,
-        error: { code: 'FORBIDDEN', message: 'Akun ini tidak memiliki akses admin' },
-      })
-    }
+    const mappedUser = await resolveAdminUser(data.user)
 
     const expiresIn = data.session.expires_in ?? 3600
     return res.json({
@@ -262,11 +261,207 @@ app.post('/auth/refresh', async (req: Request, res: Response) => {
         expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
       },
     })
-  } catch {
+  } catch (err) {
+    if (err instanceof AppError) {
+      return res.status(err.statusCode).json({
+        success: false,
+        error: { code: err.code, message: err.message },
+      })
+    }
     return res.status(503).json({
       success: false,
       error: { code: 'AUTH_UNAVAILABLE', message: 'Layanan autentikasi tidak dapat dihubungi' },
     })
+  }
+})
+
+// ============================================================
+// Admin Users Routes
+// ============================================================
+
+const ADMIN_ROLES: AdminRole[] = ['superadmin', 'admin']
+
+function parseAdminRole(value: unknown): AdminRole | null {
+  return typeof value === 'string' && ADMIN_ROLES.includes(value as AdminRole)
+    ? (value as AdminRole)
+    : null
+}
+
+function isValidEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+}
+
+app.get('/admin-users', authMiddleware, superadminMiddleware, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { page, perPage, search, role, isActive } = req.query
+    const result = await adminUserRepository.list({
+      page: page ? parseInt(page as string, 10) : undefined,
+      perPage: perPage ? parseInt(perPage as string, 10) : undefined,
+      search: typeof search === 'string' ? search : undefined,
+      role: parseAdminRole(role) ?? 'Semua',
+      isActive: isActive === 'true' ? true : isActive === 'false' ? false : undefined,
+    })
+
+    return res.json({ success: true, data: result.data, meta: result.meta })
+  } catch (err) {
+    next(err)
+  }
+})
+
+app.post('/admin-users', authMiddleware, superadminMiddleware, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { email, name, password, role } = req.body ?? {}
+
+    if (typeof email !== 'string' || !isValidEmail(email.trim())) {
+      throw new AppError('Email admin tidak valid.', 400, 'VALIDATION_ERROR')
+    }
+    if (typeof name !== 'string' || !name.trim()) {
+      throw new AppError('Nama admin wajib diisi.', 400, 'VALIDATION_ERROR')
+    }
+    if (typeof password !== 'string' || password.length < 8) {
+      throw new AppError('Password minimal 8 karakter.', 400, 'VALIDATION_ERROR')
+    }
+
+    const normalizedRole = parseAdminRole(role)
+    if (!normalizedRole) {
+      throw new AppError('Role admin tidak valid.', 400, 'VALIDATION_ERROR')
+    }
+
+    const data = await adminUserRepository.createAdmin({
+      email: email.trim().toLowerCase(),
+      name: name.trim(),
+      password,
+      role: normalizedRole,
+    })
+
+    return res.status(201).json({ success: true, data })
+  } catch (err) {
+    next(err)
+  }
+})
+
+app.patch('/admin-users/:id', authMiddleware, superadminMiddleware, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { name, password, role, isActive } = req.body ?? {}
+    const target = await adminUserRepository.findById(req.params.id)
+
+    if (!target) {
+      throw new AppError('Admin tidak ditemukan.', 404, 'NOT_FOUND')
+    }
+
+    const updates: {
+      name?: string
+      password?: string
+      role?: AdminRole
+      isActive?: boolean
+    } = {}
+
+    if (name !== undefined) {
+      if (typeof name !== 'string' || !name.trim()) {
+        throw new AppError('Nama admin wajib diisi.', 400, 'VALIDATION_ERROR')
+      }
+      updates.name = name.trim()
+    }
+
+    if (password !== undefined) {
+      if (typeof password !== 'string' || password.length < 8) {
+        throw new AppError('Password minimal 8 karakter.', 400, 'VALIDATION_ERROR')
+      }
+      updates.password = password
+    }
+
+    if (role !== undefined) {
+      const normalizedRole = parseAdminRole(role)
+      if (!normalizedRole) {
+        throw new AppError('Role admin tidak valid.', 400, 'VALIDATION_ERROR')
+      }
+      updates.role = normalizedRole
+    }
+
+    if (isActive !== undefined) {
+      if (typeof isActive !== 'boolean') {
+        throw new AppError('Status aktif admin tidak valid.', 400, 'VALIDATION_ERROR')
+      }
+      updates.isActive = isActive
+    }
+
+    if (Object.keys(updates).length === 0) {
+      throw new AppError('Tidak ada data admin yang diubah.', 400, 'VALIDATION_ERROR')
+    }
+
+    if (target.id === req.user?.id && updates.isActive === false) {
+      throw new AppError('Tidak dapat menonaktifkan akun sendiri.', 400, 'SELF_UPDATE_FORBIDDEN')
+    }
+
+    if (target.id === req.user?.id && updates.role && updates.role !== 'superadmin') {
+      throw new AppError('Tidak dapat menurunkan role akun sendiri.', 400, 'SELF_UPDATE_FORBIDDEN')
+    }
+
+    const removesActiveSuperadmin =
+      target.role === 'superadmin' &&
+      target.isActive &&
+      ((updates.role !== undefined && updates.role !== 'superadmin') || updates.isActive === false)
+
+    if (removesActiveSuperadmin) {
+      const otherSuperadmins = await adminUserRepository.countActiveSuperadmins(target.id)
+      if (otherSuperadmins === 0) {
+        throw new AppError('Minimal harus ada satu superadmin aktif.', 400, 'LAST_SUPERADMIN')
+      }
+    }
+
+    const data = await adminUserRepository.updateAdmin(target.id, updates)
+    return res.json({ success: true, data })
+  } catch (err) {
+    next(err)
+  }
+})
+
+app.delete('/admin-users/:id', authMiddleware, superadminMiddleware, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const target = await adminUserRepository.findById(req.params.id)
+
+    if (!target) {
+      throw new AppError('Admin tidak ditemukan.', 404, 'NOT_FOUND')
+    }
+
+    if (target.id === req.user?.id) {
+      throw new AppError('Tidak dapat menghapus akun sendiri.', 400, 'SELF_DELETE_FORBIDDEN')
+    }
+
+    if (target.role === 'superadmin' && target.isActive) {
+      const otherSuperadmins = await adminUserRepository.countActiveSuperadmins(target.id)
+      if (otherSuperadmins === 0) {
+        throw new AppError('Minimal harus ada satu superadmin aktif.', 400, 'LAST_SUPERADMIN')
+      }
+    }
+
+    const data = await adminUserRepository.deleteAdmin(target.id)
+    return res.json({ success: true, data })
+  } catch (err) {
+    next(err)
+  }
+})
+
+app.post('/admin-users/:id/reset-password', authMiddleware, superadminMiddleware, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { password } = req.body ?? {}
+
+    if (typeof password !== 'string' || password.length < 8) {
+      throw new AppError('Password minimal 8 karakter.', 400, 'VALIDATION_ERROR')
+    }
+
+    const target = await adminUserRepository.findById(req.params.id)
+    if (!target) {
+      throw new AppError('Admin tidak ditemukan.', 404, 'NOT_FOUND')
+    }
+
+    await adminUserRepository.updateAdmin(target.id, { password })
+    return res.json({
+      success: true,
+      data: { message: 'Password admin berhasil diperbarui.' },
+    })
+  } catch (err) {
+    next(err)
   }
 })
 

@@ -7,6 +7,7 @@ import { GalleryRepository } from './gallery'
 import { ContactMessageRepository } from './contact'
 import { NewsletterRepository } from './newsletter'
 import { SiteRepository } from './site'
+import { AdminUserRepository } from './adminUser'
 
 export const articleRepository = new ArticleRepository()
 export const commentRepository = new CommentRepository()
@@ -17,6 +18,7 @@ export const galleryRepository = new GalleryRepository()
 export const contactMessageRepository = new ContactMessageRepository()
 export const newsletterRepository = new NewsletterRepository()
 export const siteRepository = new SiteRepository()
+export const adminUserRepository = new AdminUserRepository()
 
 export {
   ArticleRepository,
@@ -28,4 +30,5 @@ export {
   ContactMessageRepository,
   NewsletterRepository,
   SiteRepository,
+  AdminUserRepository,
 }

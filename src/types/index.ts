@@ -259,6 +259,34 @@ export interface AuthSession {
   expiresAt: string
 }
 
+// Admin users (profil & otorisasi; kredensial tetap di Supabase Auth)
+export type AdminRole = Extract<UserRole, 'superadmin' | 'admin'>
+
+export interface AdminUser {
+  id: string
+  email: string
+  name: string
+  role: AdminRole
+  isActive: boolean
+  lastLoginAt?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AdminUserCreateInput {
+  email: string
+  name: string
+  password: string
+  role: AdminRole
+}
+
+export interface AdminUserUpdateInput {
+  name?: string
+  password?: string
+  role?: AdminRole
+  isActive?: boolean
+}
+
 // Kontak & newsletter
 export interface ContactMessageInput {
   name: string

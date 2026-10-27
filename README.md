@@ -58,7 +58,7 @@ ADMIN_NAME=Administrator
 
 Catatan:
 
-- `SUPABASE_SERVICE_ROLE_KEY` wajib untuk Supabase Storage dan sangat disarankan untuk operasi database server. Key ini tidak boleh dikirim ke frontend.
+- `SUPABASE_SERVICE_ROLE_KEY` wajib untuk Supabase Storage, akses tabel `admin_users`, dan pengelolaan akun admin. Key ini tidak boleh dikirim ke frontend.
 - `DB_HOST`, `DB_USER`, dan `DB_PASSWORD` hanya dipakai oleh script (`migrate`, `create-admin`). API runtime memakai Supabase client, jadi variabel DB tidak wajib di Vercel.
 - `CORS_ORIGINS` berisi origin frontend yang diizinkan, dipisahkan koma. Request tanpa `Origin` (health check/server-to-server) tetap diizinkan.
 - `MEDIA_STORAGE=auto` memakai Supabase Storage bila service role tersedia atau saat berjalan di Vercel. Gunakan `local` hanya untuk development.
@@ -72,7 +72,7 @@ npm run create-admin  # membuat/memperbarui akun Supabase Auth
 npm run verify-db     # memeriksa koneksi dan tabel
 ```
 
-`create-admin` bersifat idempotent: jika email sudah ada, password dan metadata admin diperbarui. Tidak ada kredensial admin yang ditulis di source code.
+`create-admin` bersifat idempotent: jika email sudah ada, password dan metadata admin diperbarui. Script ini juga menyinkronkan profil ke tabel `admin_users`. Tidak ada kredensial admin yang ditulis di source code.
 
 ## Menjalankan server
 
@@ -97,8 +97,14 @@ curl http://localhost:3001/health
 
 - Login: `POST /auth/login` dengan `{ "email", "password" }`.
 - Backend memvalidasi kredensial melalui `supabase.auth.signInWithPassword`.
-- Hanya user dengan `app_metadata.role` bernilai `admin` atau `superadmin` yang diizinkan masuk. Role dibaca dari metadata server, bukan metadata yang dapat diubah user.
-- `npm run create-admin` menulis role `superadmin` ke `app_metadata`.
+- Supabase Auth (`auth.users`) tetap menjadi sumber kredensial/password.
+- Tabel `admin_users` menjadi sumber profil, role, dan status aktif aplikasi.
+- Hanya user yang memiliki baris `admin_users` dengan `isActive = true` yang diizinkan masuk.
+- Setiap request terproteksi memeriksa ulang `admin_users.isActive`, sehingga penonaktifan langsung berlaku.
+- Role `superadmin` dan `admin` dibaca dari `admin_users`, bukan dari metadata yang dapat diubah user.
+- Hanya `superadmin` yang dapat mengakses `GET/POST /admin-users`, `PATCH/DELETE /admin-users/:id`, dan `POST /admin-users/:id/reset-password`.
+- Superadmin tidak dapat menonaktifkan, menghapus, atau menurunkan role akunnya sendiri. Sistem menolak perubahan yang menyisakan nol superadmin aktif.
+- `npm run create-admin` menulis role `superadmin` ke `app_metadata` dan menyinkronkan profil `admin_users`.
 - Response login berisi `user`, `accessToken`, `refreshToken`, `tokenType`, dan `expiresAt`.
 - Route terproteksi memerlukan header `Authorization: Bearer <accessToken>`.
 - Token divalidasi ulang ke Supabase Auth pada setiap request melalui `authMiddleware`.
@@ -112,6 +118,7 @@ curl http://localhost:3001/health
 | --- | --- |
 | Health | `GET /health` |
 | Auth | `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`, `POST /auth/refresh` |
+| Admin | `GET/POST /admin-users`, `PATCH/DELETE /admin-users/:id`, `POST /admin-users/:id/reset-password` |
 | Artikel | `GET/POST /articles`, `GET /articles/:slug`, `GET/PATCH/DELETE /articles/id/:id`, `PATCH/DELETE /articles/:slug` |
 | Interaksi artikel | `POST /articles/:slug/views`, `POST/DELETE /articles/:slug/like`, `POST/DELETE /articles/:slug/bookmark` |
 | Komentar | `GET/POST /articles/:slug/comments`, `DELETE /comments/:id` |
@@ -179,7 +186,7 @@ Error handler memetakan beberapa kode PostgreSQL/Supabase:
 ## Data & migrasi
 
 - `schema.sql` adalah skema lengkap dan aman dijalankan berulang (`CREATE TABLE IF NOT EXISTS`, seed `ON CONFLICT DO NOTHING`).
-- `supabase/migrations/` menyimpan riwayat perubahan. Migrasi terbaru menambahkan tabel `site_pages` dan kolom statistik di `site_settings`.
+- `supabase/migrations/` menyimpan riwayat perubahan. Migrasi terbaru menambahkan tabel `admin_users` untuk profil dan otorisasi admin; kredensial tetap di Supabase Auth.
 - Tidak ada seed artikel, agenda, pengurus, galeri, atau testimoni dummy. Database produksi mulai dari konten yang diisi admin.
 - Konten Beranda dan Tentang Kami disimpan sebagai JSONB di `site_pages`; identitas organisasi dan statistik di `site_settings`.
 

@@ -1,5 +1,7 @@
 import { Request, Response, NextFunction } from 'express'
-import { supabase } from '../config/supabase'
+import { supabase, supabaseAuth } from '../config/supabase'
+import { adminUserRepository } from '../database'
+import { AppError } from './error'
 import type { UserRole } from '../types'
 
 export interface AuthRequest extends Request {
@@ -41,8 +43,49 @@ export function mapSupabaseUser(user: {
   }
 }
 
-function isAdminRole(role: UserRole): boolean {
-  return role === 'admin' || role === 'superadmin'
+/**
+ * Validasi akun Supabase Auth terhadap tabel `admin_users`.
+ * Tabel tersebut menjadi sumber otorisasi (role + status aktif) aplikasi.
+ */
+export async function resolveAdminUser(
+  user: Parameters<typeof mapSupabaseUser>[0],
+): Promise<NonNullable<AuthRequest['user']>> {
+  const profile = await adminUserRepository.findById(user.id)
+
+  if (!profile) {
+    throw new AppError(
+      'Akun ini belum terdaftar sebagai admin. Hubungi superadmin.',
+      403,
+      'ADMIN_NOT_REGISTERED',
+    )
+  }
+
+  if (!profile.isActive) {
+    throw new AppError('Akun admin ini sudah dinonaktifkan.', 403, 'ADMIN_INACTIVE')
+  }
+
+  const mappedUser = mapSupabaseUser(user)
+  return {
+    ...mappedUser,
+    name: profile.name || mappedUser.name,
+    email: profile.email || mappedUser.email,
+    role: profile.role,
+    createdAt: profile.createdAt,
+  }
+}
+
+function sendAuthError(res: Response, err: unknown) {
+  if (err instanceof AppError) {
+    return res.status(err.statusCode).json({
+      success: false,
+      error: { code: err.code, message: err.message },
+    })
+  }
+
+  return res.status(401).json({
+    success: false,
+    error: { code: 'UNAUTHORIZED', message: 'Gagal memverifikasi sesi' },
+  })
 }
 
 export async function authMiddleware(
@@ -68,7 +111,7 @@ export async function authMiddleware(
       })
     }
 
-    const { data, error } = await supabase.auth.getUser(token)
+    const { data, error } = await supabaseAuth.auth.getUser(token)
 
     if (error || !data.user) {
       return res.status(401).json({
@@ -77,20 +120,24 @@ export async function authMiddleware(
       })
     }
 
-    const mappedUser = mapSupabaseUser(data.user)
-    if (!isAdminRole(mappedUser.role)) {
-      return res.status(403).json({
-        success: false,
-        error: { code: 'FORBIDDEN', message: 'Akun ini tidak memiliki akses admin' },
-      })
-    }
-
-    req.user = mappedUser
+    req.user = await resolveAdminUser(data.user)
     return next()
-  } catch {
-    return res.status(401).json({
+  } catch (err) {
+    return sendAuthError(res, err)
+  }
+}
+
+export function superadminMiddleware(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+) {
+  if (req.user?.role !== 'superadmin') {
+    return res.status(403).json({
       success: false,
-      error: { code: 'UNAUTHORIZED', message: 'Gagal memverifikasi sesi' },
+      error: { code: 'FORBIDDEN', message: 'Hanya superadmin yang dapat mengelola admin' },
     })
   }
+
+  return next()
 }

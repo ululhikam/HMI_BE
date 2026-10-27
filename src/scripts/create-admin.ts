@@ -114,6 +114,18 @@ async function main() {
       [ADMIN_EMAIL, userId],
     )
 
+    await client.query(
+      `insert into public.admin_users (id, email, name, role, "isActive", "createdAt", "updatedAt")
+       values ($1::uuid, $2, $3, 'superadmin', true, now(), now())
+       on conflict (id) do update
+       set email = excluded.email,
+           name = excluded.name,
+           role = 'superadmin',
+           "isActive" = true,
+           "updatedAt" = now()`,
+      [userId, ADMIN_EMAIL, ADMIN_NAME],
+    )
+
     await client.query('COMMIT')
     console.log('Akun admin siap digunakan.')
   } catch (err) {
